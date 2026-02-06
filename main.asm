@@ -39,18 +39,18 @@ include 'macros.inc'
 purge mov,add,sub
 include 'proc32.inc'
 include 'dll.inc'
-include 'debug-fdo.inc'
+include 'Debug-fdo.inc'
 include 'network.inc'
 include 'transferdata.inc'
 
 include 'mpint.inc'
 include 'random.inc'
 include 'hmac.inc'
-include 'prf.inc'
+include 'PRF.inc'
 include 'aes256.inc'
 include 'aes256-ctr.inc'
 include 'aes256-cbc.inc'
-include 'sha256.inc'
+include 'SHA256.INC'
 
 start:
     mcall   68, 11      ; Init heap
@@ -88,7 +88,7 @@ main:
     jz  exit
 
 resolve:
-    mov [sockaddr1.port], 22 shl 8
+    mov [sockaddr1.port], 0xBB01 ; 443 in network byte order
 
 ; delete terminating '\n'
     mov esi, hostname
@@ -104,6 +104,7 @@ resolve:
   .do_port:
     xor eax, eax
     xor ebx, ebx
+    xor ecx, ecx
     mov byte[esi-1], 0
   .portloop:
     lodsb
@@ -116,9 +117,14 @@ resolve:
     lea ebx, [ebx*4 + ebx]
     shl ebx, 1
     add ebx, eax
+    inc ecx
     jmp .portloop
 
   .port_done:
+    test ecx, ecx
+    jz hostname_error
+    cmp ebx, 65535
+    ja hostname_error
     xchg    bl, bh
     mov [sockaddr1.port], bx
 
@@ -162,7 +168,7 @@ resolve:
     mov [socketnum], eax
 
 ; Connect
-    mcall   connect, [socketnum], sockaddr1, 18
+    mcall   connect, [socketnum], sockaddr1, sockaddr_in_size
     test    eax, eax
     jnz socket_err
     DEBUGF  1, "TLS: Socket Connected\n"
@@ -339,7 +345,7 @@ handshake:
     mov     esi,serverAnswer
     mov     ecx,eax
     stdcall add_to_buffer
-    
+
     ;check hello done
     add     eax,5
     cmp     dword[serverAnswer+eax],0x0000000e
@@ -378,20 +384,69 @@ handshake:
     add     ebx,20
     ;plus 1, first 00 doesn't matter
 
-    ; TODO delete this copying
+    ; Copy modulus bytes from certificate into big-endian mpint buffer
+    mov     esi, serverAnswer
+    add     esi, ebx
+    lea     edi, [RSApublicK+4]
+    mov     ecx, 512
+    rep movsb
+    ; RSApublicK was saved
 
-    .loop2:
-    mov     eax,dword[serverAnswer+ebx]
-    mov     dword[RSApublicK+ecx+4],eax
-    add     ecx,4
-    add     ebx,4
-    cmp     ecx,512
-    jne     .loop2
-    ;RSApublicK was saved
-    add     ebx,2
-    mov     eax,dword[serverAnswer+ebx]
-    shr     eax,8
+    ; parse exponent INTEGER from certificate (ASN.1 DER)
+    add     ebx, 512
+    mov     edx, 16
+  .find_exp_tag:
+    cmp     byte [serverAnswer+ebx], 0x02
+    je      .exp_tag_found
+    inc     ebx
+    dec     edx
+    jnz     .find_exp_tag
+    jmp     certificate_error
 
+  .exp_tag_found:
+    inc     ebx
+    movzx   eax, byte [serverAnswer+ebx]
+    inc     ebx
+    cmp     eax, 0x80
+    jb      .exp_len_ready
+    cmp     eax, 0x81
+    je      .exp_len_1
+    cmp     eax, 0x82
+    je      .exp_len_2
+    jmp     certificate_error
+
+  .exp_len_1:
+    movzx   eax, byte [serverAnswer+ebx]
+    inc     ebx
+    jmp     .exp_len_ready
+
+  .exp_len_2:
+    movzx   eax, byte [serverAnswer+ebx]
+    shl     eax, 8
+    movzx   ecx, byte [serverAnswer+ebx+1]
+    add     eax, ecx
+    add     ebx, 2
+
+  .exp_len_ready:
+    cmp     eax, 0
+    je      certificate_error
+    cmp     eax, MPINT_MAX_LEN
+    ja      certificate_error
+    stdcall mpint_zero, exponent
+    mov     dword [exponent], eax
+
+    lea     esi, [serverAnswer+ebx]
+    add     esi, eax
+    dec     esi
+    lea     edi, [exponent+4]
+    mov     ecx, eax
+    std
+  .exp_copy:
+    lodsb
+    stosb
+    dec     ecx
+    jnz     .exp_copy
+    cld
 
 
     ;serverhello_done recieve always 9
@@ -410,11 +465,7 @@ handshake:
     DEBUGF  1, "TLS: Start calculating!!!\n"
     ; Exponent for Modexp! Small-Endian
 
-    ; TODO exponent from certificate
-
-    ;DEBUGF  1, "TLS: Exponent: \n"
-    mov     dword[exponent],4
-    mov     dword[exponent+4],65537
+    DEBUGF  1, "TLS: Parsed exponent length %d\n", [exponent]
     stdcall mpint_length, exponent
     ;stdcall mpint_print, exponent
 
@@ -470,7 +521,7 @@ handshake:
     mov     byte[premasterKey+50],0x03
     mov     byte[premasterKey+51],0x03
     mov     byte[premasterKey+52],0x00
-    
+
     stdcall mpint_length, premasterKey
     ;stdcall mpint_print, premasterKey
 
@@ -609,7 +660,7 @@ handshake:
     rep     movsd
     ;need to calculate MAC of buf
     ; Message authentication for FinishedMessage
-    ;length 
+    ;length
 
     ;IT SHOULD BE OK
 
@@ -672,7 +723,7 @@ handshake:
         add     edi, 16
         loop    @r
 
-    
+
     DEBUGF  1,'Encrypt Succesful\n'
     mcall   send, [socketnum], bufferptr, 85, 0
     cmp     eax, -1
@@ -752,15 +803,15 @@ str12   db  'Server Hello error.',10,10,0
 str13   db  'certificate error.',10,10,0
 str14   db  'TLS connected',10,10,0
 
-master_str: 
+master_str:
     db 'master secret',0
     .length = $ - master_str - 1
 
-finished_label: 
+finished_label:
     db 'client finished',0
     .length = $ - finished_label - 1
 
-keyExpansion_label: 
+keyExpansion_label:
     db 'key expansion',0
     .length = $ - keyExpansion_label - 1
 
@@ -771,7 +822,9 @@ sockaddr1:
     dw AF_INET4
   .port dw 0
   .ip   dd 0
-    rb 10
+    rb 8
+
+sockaddr_in_size = $ - sockaddr1
 
 ;2 x 32 byte keys and 2 x 32 bytes MAC keys
 session_keys:
