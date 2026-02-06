@@ -35,3 +35,11 @@ jobs:
       - name: Validate output
         run: |
           test -s tls
+
+      - name: Upload tls binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tls-binary
+          path: tls
+          if-no-files-found: error
+          retention-days: 14
