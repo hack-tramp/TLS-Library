@@ -1,0 +1,3 @@
+[submodule "kolibrios"]
+	path = kolibrios
+	url = https://github.com/KolibriOS/kolibrios.git
