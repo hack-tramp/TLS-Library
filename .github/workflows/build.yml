@@ -1,0 +1,37 @@
+name: Build TLS Library
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Sync and init submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth 1
+
+      - name: Install FASM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fasm qemu-user
+
+      - name: Build binary
+        run: |
+          if command -v fasm >/dev/null 2>&1; then
+            fasm main.asm tls || qemu-i386 /usr/bin/fasm main.asm tls
+          else
+            qemu-i386 /usr/bin/fasm main.asm tls
+          fi
+
+      - name: Validate output
+        run: |
+          test -s tls
