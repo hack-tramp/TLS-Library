@@ -274,6 +274,7 @@ handshake:
     mov     byte [clienthello+49], 0
     
     ; Set Extensions length field (big-endian)
+    ; cx contains SNI extension total size (hostname_len + 9)
     xchg    cl, ch
     mov     word [clienthello+50], cx
     xchg    cl, ch ; restore for later use
@@ -298,7 +299,8 @@ handshake:
     mov     byte [clienthello+58], 0x00
     
     ; Write hostname length (big-endian for TLS)
-    mov     ax, [hostname_len]
+    ; FIX: hostname_len is 32-bit (dd), so use eax
+    mov     eax, [hostname_len]
     xchg    al, ah
     mov     word [clienthello+59], ax
     
@@ -941,69 +943,4 @@ endp
 proc print_TextNbytes _ptr,n
         pushad
         mov     esi, [_ptr]
-        mov     ecx, [n]
-.next_dword:
-        lodsd
-        bswap eax
-        DEBUGF  1,'%s',eax
-        loop    .next_dword
-        DEBUGF  1,'\n'
-        popad
-        ret
-endp
-
-
-
-; import
-include_debug_strings
-align 4
-@IMPORT:
-
-library network, 'network.obj', \
-    console, 'console.obj';, \
-;        libcrash, 'libcrash.obj'
-
-import  network, \
-    getaddrinfo, 'getaddrinfo', \
-    freeaddrinfo, 'freeaddrinfo', \
-    inet_ntoa, 'inet_ntoa'
-
-import  console, \
-    con_start, 'START', \
-    con_init, 'con_init', \
-    con_write_asciiz, 'con_write_asciiz', \
-    con_exit, 'con_exit', \
-    con_gets, 'con_gets', \
-    con_cls, 'con_cls', \
-    con_getch2, 'con_getch2', \
-    con_set_cursor_pos, 'con_set_cursor_pos', \
-    con_write_string, 'con_write_string', \
-    con_get_flags,  'con_get_flags'
-
-IncludeUGlobals
-
-i_end:
-
-IncludeIGlobals
-;variables
-socketnum   dd ?
-clienthello rb 64
-sessionid   rb 32
-hostname    rb 1024
-hostname_len dd 0
-serverAnswer rb 4048
-RSApublicK rb MPINT_MAX_LEN+4 ; p*q
-RSA_Modulus rb MPINT_MAX_LEN+4
-exponent rb MPINT_MAX_LEN+4 ; e
-buffer_buffer rb MPINT_MAX_LEN+4 ;
-clientKeyMessage rb MPINT_MAX_LEN+4 ;
-premasterKey rb MPINT_MAX_LEN+4;
-mpint_tmp       rb MPINT_MAX_LEN+4
-handshake_message_buffer rb 4048
-handshake_buffer_size dd 0
-randoms_buffer rb 4048
-randoms_buffer_size dd 0
-masterKey rb l*4
-
-
-mem:
+       
