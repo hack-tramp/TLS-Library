@@ -965,4 +965,45 @@ library network, 'network.obj', \
 
 import  network, \
     getaddrinfo, 'getaddrinfo', \
-    freeadd
+    freeaddrinfo, 'freeaddrinfo', \
+    inet_ntoa, 'inet_ntoa'
+
+import  console, \
+    con_start, 'START', \
+    con_init, 'con_init', \
+    con_write_asciiz, 'con_write_asciiz', \
+    con_exit, 'con_exit', \
+    con_gets, 'con_gets', \
+    con_cls, 'con_cls', \
+    con_getch2, 'con_getch2', \
+    con_set_cursor_pos, 'con_set_cursor_pos', \
+    con_write_string, 'con_write_string', \
+    con_get_flags,  'con_get_flags'
+
+IncludeUGlobals
+
+i_end:
+
+IncludeIGlobals
+;variables
+socketnum   dd ?
+clienthello rb 64
+sessionid   rb 32
+hostname    rb 1024
+hostname_len dd 0
+serverAnswer rb 4048
+RSApublicK rb MPINT_MAX_LEN+4 ; p*q
+RSA_Modulus rb MPINT_MAX_LEN+4
+exponent rb MPINT_MAX_LEN+4 ; e
+buffer_buffer rb MPINT_MAX_LEN+4 ;
+clientKeyMessage rb MPINT_MAX_LEN+4 ;
+premasterKey rb MPINT_MAX_LEN+4;
+mpint_tmp       rb MPINT_MAX_LEN+4
+handshake_message_buffer rb 4048
+handshake_buffer_size dd 0
+randoms_buffer rb 4048
+randoms_buffer_size dd 0
+masterKey rb l*4
+
+
+mem:
