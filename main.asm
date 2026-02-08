@@ -90,21 +90,21 @@ main:
 resolve:
     mov [sockaddr1.port], 0xBB01 ; 443 in network byte order
 
-; delete terminating '\n'
+; delete terminating '\n' and find hostname length for SNI
     mov esi, hostname
-  @@:
+    xor ecx, ecx
+  .calc_len:
     lodsb
     cmp al, ':'
     je  .do_port
     cmp al, 0x20
-    ja  @r
-    mov byte[esi-1], 0
-    jmp .done
+    jbe .len_done
+    inc ecx
+    jmp .calc_len
 
   .do_port:
     xor eax, eax
     xor ebx, ebx
-    xor ecx, ecx
     mov byte[esi-1], 0
   .portloop:
     lodsb
@@ -117,16 +117,14 @@ resolve:
     lea ebx, [ebx*4 + ebx]
     shl ebx, 1
     add ebx, eax
-    inc ecx
     jmp .portloop
 
   .port_done:
-    test ecx, ecx
-    jz hostname_error
-    cmp ebx, 65535
-    ja hostname_error
     xchg    bl, bh
     mov [sockaddr1.port], bx
+
+  .len_done:
+    mov [hostname_len], ecx     ; Save hostname length for SNI
 
   .done:
 
@@ -217,14 +215,25 @@ handshake:
 ;-----------------------------------------------------
     DEBUGF  1, "TLS: Handshake process starting\n"
     mov     dword [clienthello], 0x030316 ; protocol version, plus 0x16 (22) handshake (RFC says 3, 1 or 3,0 for record-layer clienthello)
-    mov     eax,43+ciphersuites.length
+    
+    ; Calculate ClientHello size with SNI extension
+    mov     eax, 43 + ciphersuites.length    ; Base size without extensions
+    mov     ecx, [hostname_len]
+    add     ecx, 9                            ; SNI extension total size
+    add     eax, ecx                          ; Total ClientHello size
+    
+    ; Set Record Layer length (bytes 3-4) - already big-endian via AH/AL
     mov     byte [clienthello+3], ah
     mov     byte [clienthello+4], al
+    
     mov     byte [clienthello+5], 1 ; client_hello
-    sub     eax, 4
+    
+    ; Set Handshake length (bytes 6-8) - already big-endian via AH/AL
+    sub     eax, 4                            ; Handshake length excludes the 4-byte handshake header
     mov     byte [clienthello+6], 0
     mov     byte [clienthello+7], ah
     mov     byte [clienthello+8], al
+    
     mov     word [clienthello+9], 0x0303
     ; need to get gmt in big endian format into edx
     ;mov            dword[clienthello+11] , edx
@@ -263,9 +272,51 @@ handshake:
     mov     byte [clienthello+47], 0x3D
     mov     byte [clienthello+48], 1
     mov     byte [clienthello+49], 0
-    mov     eax,50
+    
+    ; Set Extensions length field (big-endian)
+    xchg    cl, ch
+    mov     word [clienthello+50], cx
+    xchg    cl, ch ; restore for later use
+    
+    ; Write SNI extension (type 0x0000) - already big-endian
+    mov     word [clienthello+52], 0x0000
+    
+    ; Calculate SNI extension data length and store big-endian
+    mov     eax, [hostname_len]
+    add     eax, 5                            ; 2 (list_len) + 1 (name_type) + 2 (host_len)
+    xchg    al, ah
+    mov     word [clienthello+54], ax
+    xchg    al, ah ; restore for later use
+    
+    ; Write server_name_list length (big-endian)
+    mov     eax, [hostname_len]
+    add     eax, 3                            ; 1 (name_type) + 2 (host_len)
+    xchg    al, ah
+    mov     word [clienthello+56], ax
+    
+    ; Write hostname type (0x00 = host_name)
+    mov     byte [clienthello+58], 0x00
+    
+    ; Write hostname length (big-endian for TLS)
+    mov     ax, [hostname_len]
+    xchg    al, ah
+    mov     word [clienthello+59], ax
+    
+    ; Write hostname itself
+    mov     esi, hostname
+    mov     edi, clienthello+61
+    mov     ecx, [hostname_len]
+    rep movsb
+    
+    ; Calculate total message size for send
+    ; CRITICAL FIX: ECX is now 0 after rep movsb, must reload SNI size
+    mov     eax, 50                           ; Base size without SNI
+    mov     ecx, [hostname_len]               ; Reload hostname length
+    add     ecx, 9                            ; Add SNI header bytes
+    add     eax, ecx                          ; Total message size
+    
     ;send client hello
-    mcall   send, [socketnum], clienthello, 50, 0
+    mcall   send, [socketnum], clienthello, eax, 0
     cmp     eax, -1
     je      socket_err
 
@@ -914,44 +965,4 @@ library network, 'network.obj', \
 
 import  network, \
     getaddrinfo, 'getaddrinfo', \
-    freeaddrinfo, 'freeaddrinfo', \
-    inet_ntoa, 'inet_ntoa'
-
-import  console, \
-    con_start, 'START', \
-    con_init, 'con_init', \
-    con_write_asciiz, 'con_write_asciiz', \
-    con_exit, 'con_exit', \
-    con_gets, 'con_gets', \
-    con_cls, 'con_cls', \
-    con_getch2, 'con_getch2', \
-    con_set_cursor_pos, 'con_set_cursor_pos', \
-    con_write_string, 'con_write_string', \
-    con_get_flags,  'con_get_flags'
-
-IncludeUGlobals
-
-i_end:
-
-IncludeIGlobals
-;variables
-socketnum   dd ?
-clienthello rb 64
-sessionid   rb 32
-hostname    rb 1024
-serverAnswer rb 4048
-RSApublicK rb MPINT_MAX_LEN+4 ; p*q
-RSA_Modulus rb MPINT_MAX_LEN+4
-exponent rb MPINT_MAX_LEN+4 ; e
-buffer_buffer rb MPINT_MAX_LEN+4 ;
-clientKeyMessage rb MPINT_MAX_LEN+4 ;
-premasterKey rb MPINT_MAX_LEN+4;
-mpint_tmp       rb MPINT_MAX_LEN+4
-handshake_message_buffer rb 4048
-handshake_buffer_size dd 0
-randoms_buffer rb 4048
-randoms_buffer_size dd 0
-masterKey rb l*4
-
-
-mem:
+    freeadd
