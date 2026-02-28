@@ -1007,12 +1007,7 @@ randoms_buffer rb 4048
 randoms_buffer_size dd 0
 masterKey rb l*4
 
-; MISSING VARIABLES - ADD THESE:
-bufferptr    rb 4096      ; for finished message
-iv           rb 16        ; initialization vector
-msg          rb 64        ; message buffer
-tmp_buffer   rb 1024      ; temp for HMAC
-l = 48                    ; PRF length constant
 
 mem:
+
 
