@@ -85,7 +85,7 @@ main:
     test    eax, eax
     jz  exit
     cmp byte[esi], 10
-    jz  exit
+    jz  empty_input
 
 resolve:
     mov [sockaddr1.port], 0xBB01 ; 443 in network byte order
@@ -812,7 +812,10 @@ handshake:
 
 exit:
     DEBUGF  1, "TLS: Exiting\n"
+    cmp     dword [socketnum], -1
+    je      .skip_close
     mcall   close, [socketnum]
+  .skip_close:
     mcall   -1
 
 socket_err:
@@ -823,6 +826,10 @@ socket_err:
 dns_error:
     DEBUGF  1, "TLS: DNS error %d\n", eax
     invoke  con_write_asciiz, str5
+    jmp prompt
+
+empty_input:
+    invoke  con_write_asciiz, str15
     jmp prompt
 
 
@@ -855,6 +862,7 @@ str11   db  10,'Remote host closed the connection.',10,10,0
 str12   db  'Server Hello error.',10,10,0
 str13   db  'certificate error.',10,10,0
 str14   db  'TLS connected',10,10,0
+str15   db  'Empty host name. Please enter server host (or press Ctrl+D to quit).',10,10,0
 
 master_str:
     db 'master secret',0
@@ -988,7 +996,7 @@ i_end:
 
 IncludeIGlobals
 ;variables
-socketnum   dd ?
+socketnum   dd -1
 clienthello rb 256
 sessionid   rb 32
 hostname    rb 1024
